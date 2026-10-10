@@ -7,7 +7,7 @@ using SimpleInventoryManagementSystem.Services;
 public partial class MainForm : Form
 {
     private readonly InventoryManager inventoryManager;
-    private readonly JsonStorageService storageService;
+    private readonly StorageService storageService;
     private bool isUpdatingSelection = false;
 
     public MainForm()
@@ -17,7 +17,7 @@ public partial class MainForm : Form
         inventoryManager = new InventoryManager();
         storageService = new JsonStorageService();
 
-        // Configure table columns
+        // Configure DataGridView columns
         ConfigureDataGridView();
     }
 
@@ -84,7 +84,7 @@ public partial class MainForm : Form
         });
     }
 
-    // Form load event handler
+    // Load products on startup
     private void MainForm_Load(object? sender, EventArgs e)
     {
         // Load saved products
@@ -92,12 +92,14 @@ public partial class MainForm : Form
         {
             List<Product> savedProducts = storageService.LoadProducts();
             inventoryManager.LoadProducts(savedProducts);
-            DisplayProducts(inventoryManager.Products);
-            lblStatus.Text = $"Loaded {inventoryManager.Products.Count} products from storage.";
+            RefreshProductGrid();
+            lblStatus.Text = $"Loaded {savedProducts.Count} products from storage.";
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Could not load products: " + ex.Message, "Storage Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("Could not load products: " + ex.Message + "\nStarting with an empty inventory.", "Storage Notice", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            inventoryManager.LoadProducts(new List<Product>());
+            RefreshProductGrid();
             lblStatus.Text = "Started with an empty inventory.";
         }
     }
@@ -105,94 +107,124 @@ public partial class MainForm : Form
     // Add a new product
     private void btnAdd_Click(object? sender, EventArgs e)
     {
-        // Check product input
-        string productId = txtProductId.Text.Trim();
-        if (string.IsNullOrWhiteSpace(productId))
+        // Validate input for new product
+        if (!ValidateProductInput(true))
         {
-            MessageBox.Show("Please enter a Product ID.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            txtProductId.Focus();
             return;
         }
 
-        string name = txtName.Text.Trim();
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            MessageBox.Show("Please enter a Product Name.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            txtName.Focus();
-            return;
-        }
-
-        if (cmbCategory.SelectedItem == null || string.IsNullOrWhiteSpace(cmbCategory.Text))
-        {
-            MessageBox.Show("Please select a Category.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            cmbCategory.Focus();
-            return;
-        }
-
-        string category = cmbCategory.Text.Trim();
-
-        if (nudPrice.Value < 0)
-        {
-            MessageBox.Show("Price cannot be negative.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            nudPrice.Focus();
-            return;
-        }
-
-        if (nudQuantity.Value < 0)
-        {
-            MessageBox.Show("Quantity cannot be negative.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            nudQuantity.Focus();
-            return;
-        }
-
-        if (nudMinimumStock.Value < 0)
-        {
-            MessageBox.Show("Minimum stock level cannot be negative.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            nudMinimumStock.Focus();
-            return;
-        }
+        Product newProduct = GetProductFromInputs();
 
         // Check for duplicate product ID
-        if (inventoryManager.ProductIdExists(productId))
+        if (inventoryManager.ProductIdExists(newProduct.ProductId))
         {
-            MessageBox.Show("A product with this ID already exists. Product IDs must be unique.", "Duplicate ID", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("Product ID already exists. Please enter a unique ID.", "Duplicate ID", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             txtProductId.Focus();
             return;
         }
 
-        // Create product object
-        Product newProduct = new Product(
-            productId,
-            name,
-            category,
-            nudPrice.Value,
-            (int)nudQuantity.Value,
-            (int)nudMinimumStock.Value
-        );
-
-        // Add to inventory manager
+        // Add to manager
         inventoryManager.AddProduct(newProduct);
 
-        // Save products to JSON
-        try
+        // Save inventory to JSON
+        SaveInventory();
+
+        // Refresh UI
+        RefreshProductGrid();
+        ClearInputs();
+
+        MessageBox.Show("Product added successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        lblStatus.Text = $"Product '{newProduct.Name}' added successfully.";
+    }
+
+    // Update existing product
+    private void btnUpdate_Click(object? sender, EventArgs e)
+    {
+        string productId = txtProductId.Text.Trim();
+
+        if (string.IsNullOrWhiteSpace(productId))
         {
-            storageService.SaveProducts(inventoryManager.Products);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show("Failed to save products: " + ex.Message, "Save Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("Please select a product from the table to update.", "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        // Refresh product table
-        DisplayProducts(inventoryManager.Products);
+        if (!inventoryManager.ProductIdExists(productId))
+        {
+            MessageBox.Show("The product being edited does not exist in inventory.", "Product Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
 
-        // Clear input controls
+        // Validate updated fields
+        if (!ValidateProductInput(false))
+        {
+            return;
+        }
+
+        Product updatedProduct = GetProductFromInputs();
+
+        // Update in manager
+        inventoryManager.UpdateProduct(updatedProduct);
+
+        // Save inventory to JSON
+        SaveInventory();
+
+        // Refresh UI
+        RefreshProductGrid();
+
+        MessageBox.Show("Product updated successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        lblStatus.Text = $"Product '{updatedProduct.Name}' updated successfully.";
+    }
+
+    // Delete existing product
+    private void btnDelete_Click(object? sender, EventArgs e)
+    {
+        string productId = txtProductId.Text.Trim();
+
+        if (string.IsNullOrWhiteSpace(productId))
+        {
+            MessageBox.Show("Please select a product from the table to delete.", "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        Product? productToDelete = inventoryManager.FindProductById(productId);
+        if (productToDelete == null)
+        {
+            MessageBox.Show("The selected product does not exist in inventory.", "Product Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        // Ask for confirmation
+        DialogResult result = MessageBox.Show(
+            $"Are you sure you want to delete '{productToDelete.Name}' (ID: {productToDelete.ProductId})?",
+            "Confirm Delete",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question
+        );
+
+        if (result != DialogResult.Yes)
+        {
+            return;
+        }
+
+        // Delete from manager
+        inventoryManager.DeleteProduct(productId);
+
+        // Save inventory to JSON
+        SaveInventory();
+
+        // Refresh UI
+        RefreshProductGrid();
         ClearInputs();
 
-        // Display success confirmation
-        MessageBox.Show("Product added successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        lblStatus.Text = $"Product '{newProduct.Name}' (ID: {productId}) added successfully.";
+        MessageBox.Show("Product deleted successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        lblStatus.Text = $"Product '{productId}' was deleted.";
+    }
+
+    // Clear all input controls
+    private void btnClear_Click(object? sender, EventArgs e)
+    {
+        ClearInputs();
+        lblStatus.Text = "Input fields cleared.";
     }
 
     // Search products by ID or Name
@@ -200,35 +232,124 @@ public partial class MainForm : Form
     {
         string searchText = txtSearch.Text.Trim();
 
-        // If search is empty show all
         if (string.IsNullOrWhiteSpace(searchText))
         {
-            DisplayProducts(inventoryManager.Products);
-            lblStatus.Text = $"Showing all {inventoryManager.Products.Count} products.";
+            RefreshProductGrid();
+            lblStatus.Text = $"Showing all {inventoryManager.GetProducts().Count} products.";
             return;
         }
 
         List<Product> searchResults = inventoryManager.SearchProducts(searchText);
-        DisplayProducts(searchResults);
-        lblStatus.Text = $"Found {searchResults.Count} matching product(s).";
+        RefreshProductGrid(searchResults);
+        lblStatus.Text = $"Found {searchResults.Count} product(s) matching '{searchText}'.";
     }
 
-    // Show all products
+    // Restore full product list
     private void btnShowAll_Click(object? sender, EventArgs e)
     {
         txtSearch.Clear();
-        DisplayProducts(inventoryManager.Products);
-        lblStatus.Text = $"Showing all {inventoryManager.Products.Count} products.";
+        RefreshProductGrid();
+        lblStatus.Text = $"Showing all {inventoryManager.GetProducts().Count} products.";
     }
 
-    // Clear input fields
-    private void btnClear_Click(object? sender, EventArgs e)
+    // Display only products that are low on stock
+    private void btnShowLowStock_Click(object? sender, EventArgs e)
     {
-        ClearInputs();
-        lblStatus.Text = "Input fields cleared.";
+        List<Product> lowStockProducts = inventoryManager.GetLowStockProducts();
+        RefreshProductGrid(lowStockProducts);
+        lblStatus.Text = $"Showing {lowStockProducts.Count} low-stock product(s).";
     }
 
-    // Display selected product details in input controls
+    // Increase stock for selected product
+    private void btnIncreaseStock_Click(object? sender, EventArgs e)
+    {
+        string productId = txtProductId.Text.Trim();
+
+        if (string.IsNullOrWhiteSpace(productId))
+        {
+            MessageBox.Show("Please select a product from the table first.", "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        int amount = (int)nudStockAmount.Value;
+        if (amount <= 0)
+        {
+            MessageBox.Show("Stock adjustment amount must be greater than zero.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        // Increase stock in manager
+        bool success = inventoryManager.IncreaseStock(productId, amount);
+        if (!success)
+        {
+            MessageBox.Show("Could not increase stock. Product not found.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        // Save inventory to JSON
+        SaveInventory();
+
+        // Refresh table and inputs
+        RefreshProductGrid();
+
+        Product? updated = inventoryManager.FindProductById(productId);
+        if (updated != null)
+        {
+            nudQuantity.Value = updated.Quantity;
+        }
+
+        MessageBox.Show($"Stock increased by {amount}. Current quantity: {updated?.Quantity}", "Stock Updated", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        lblStatus.Text = $"Stock increased by {amount} for product '{productId}'.";
+    }
+
+    // Decrease stock for selected product
+    private void btnDecreaseStock_Click(object? sender, EventArgs e)
+    {
+        string productId = txtProductId.Text.Trim();
+
+        if (string.IsNullOrWhiteSpace(productId))
+        {
+            MessageBox.Show("Please select a product from the table first.", "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        Product? product = inventoryManager.FindProductById(productId);
+        if (product == null)
+        {
+            MessageBox.Show("Product not found.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        int amount = (int)nudStockAmount.Value;
+        if (amount <= 0)
+        {
+            MessageBox.Show("Stock adjustment amount must be greater than zero.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        // Validate stock does not go below zero
+        if (product.Quantity < amount)
+        {
+            MessageBox.Show($"Cannot remove more stock than available. Current stock: {product.Quantity}.", "Insufficient Stock", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        // Decrease stock in manager
+        inventoryManager.DecreaseStock(productId, amount);
+
+        // Save inventory to JSON
+        SaveInventory();
+
+        // Refresh table and inputs
+        RefreshProductGrid();
+
+        nudQuantity.Value = product.Quantity;
+
+        MessageBox.Show($"Stock decreased by {amount}. Current quantity: {product.Quantity}", "Stock Updated", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        lblStatus.Text = $"Stock decreased by {amount} for product '{productId}'.";
+    }
+
+    // Populate input controls from selected DataGridView row
     private void dgvProducts_SelectionChanged(object? sender, EventArgs e)
     {
         if (isUpdatingSelection)
@@ -241,8 +362,8 @@ public partial class MainForm : Form
             return;
         }
 
-        DataGridViewRow selectedRow = dgvProducts.SelectedRows[0];
-        Product? product = selectedRow.DataBoundItem as Product;
+        DataGridViewRow row = dgvProducts.SelectedRows[0];
+        Product? product = row.DataBoundItem as Product;
 
         if (product != null)
         {
@@ -261,20 +382,113 @@ public partial class MainForm : Form
             nudPrice.Value = product.Price;
             nudQuantity.Value = product.Quantity;
             nudMinimumStock.Value = product.MinimumStockLevel;
+
+            // Lock Product ID while editing
+            txtProductId.ReadOnly = true;
         }
     }
 
-    // Refresh the DataGridView display
-    private void DisplayProducts(List<Product> products)
+    // Refresh DataGridView display and update summary counters
+    private void RefreshProductGrid(List<Product>? productsToDisplay = null)
     {
         isUpdatingSelection = true;
         dgvProducts.DataSource = null;
-        dgvProducts.DataSource = new List<Product>(products);
+
+        List<Product> displayList = productsToDisplay ?? inventoryManager.GetProducts();
+        dgvProducts.DataSource = new List<Product>(displayList);
         dgvProducts.ClearSelection();
         isUpdatingSelection = false;
+
+        UpdateSummary();
     }
 
-    // Clear all input controls
+    // Save inventory using storage service with error handling
+    private void SaveInventory()
+    {
+        try
+        {
+            storageService.SaveProducts(inventoryManager.GetProducts());
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Error saving products to file: " + ex.Message, "Storage Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    // Update total and low-stock count labels
+    private void UpdateSummary()
+    {
+        int totalCount = inventoryManager.GetProducts().Count;
+        int lowStockCount = inventoryManager.GetLowStockProducts().Count;
+
+        lblTotalProducts.Text = $"Total Products: {totalCount}";
+        lblLowStockCount.Text = $"Low Stock: {lowStockCount}";
+    }
+
+    // Validate inputs for product creation or editing
+    private bool ValidateProductInput(bool isNew)
+    {
+        string productId = txtProductId.Text.Trim();
+        if (string.IsNullOrWhiteSpace(productId))
+        {
+            MessageBox.Show("Please enter a product ID.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            txtProductId.Focus();
+            return false;
+        }
+
+        string name = txtName.Text.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            MessageBox.Show("Please enter a product name.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            txtName.Focus();
+            return false;
+        }
+
+        if (cmbCategory.SelectedItem == null || string.IsNullOrWhiteSpace(cmbCategory.Text))
+        {
+            MessageBox.Show("Please select a category.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            cmbCategory.Focus();
+            return false;
+        }
+
+        if (nudPrice.Value < 0)
+        {
+            MessageBox.Show("Price cannot be negative.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            nudPrice.Focus();
+            return false;
+        }
+
+        if (nudQuantity.Value < 0)
+        {
+            MessageBox.Show("Stock quantity cannot be negative.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            nudQuantity.Focus();
+            return false;
+        }
+
+        if (nudMinimumStock.Value < 0)
+        {
+            MessageBox.Show("Minimum stock level cannot be negative.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            nudMinimumStock.Focus();
+            return false;
+        }
+
+        return true;
+    }
+
+    // Construct Product object from current form controls
+    private Product GetProductFromInputs()
+    {
+        return new Product(
+            txtProductId.Text.Trim(),
+            txtName.Text.Trim(),
+            cmbCategory.Text.Trim(),
+            nudPrice.Value,
+            (int)nudQuantity.Value,
+            (int)nudMinimumStock.Value
+        );
+    }
+
+    // Clear all inputs and unlock Product ID
     private void ClearInputs()
     {
         isUpdatingSelection = true;
@@ -284,6 +498,8 @@ public partial class MainForm : Form
         nudPrice.Value = 0;
         nudQuantity.Value = 0;
         nudMinimumStock.Value = 0;
+        nudStockAmount.Value = 1;
+        txtProductId.ReadOnly = false;
         dgvProducts.ClearSelection();
         isUpdatingSelection = false;
 
