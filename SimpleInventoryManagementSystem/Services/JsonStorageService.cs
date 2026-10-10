@@ -3,7 +3,7 @@ namespace SimpleInventoryManagementSystem.Services;
 using System.Text.Json;
 using SimpleInventoryManagementSystem.Models;
 
-public class JsonStorageService
+public class JsonStorageService : StorageService
 {
     private readonly string filePath;
 
@@ -21,7 +21,7 @@ public class JsonStorageService
     }
 
     // Load products from JSON file
-    public List<Product> LoadProducts()
+    public override List<Product> LoadProducts()
     {
         // Return empty list if file does not exist
         if (!File.Exists(filePath))
@@ -35,6 +35,10 @@ public class JsonStorageService
             List<Product>? products = JsonSerializer.Deserialize<List<Product>>(jsonText);
             return products ?? new List<Product>();
         }
+        catch (JsonException ex)
+        {
+            throw new IOException("The JSON file contains invalid format: " + ex.Message, ex);
+        }
         catch (Exception ex)
         {
             throw new IOException("Failed to load products from file: " + ex.Message, ex);
@@ -42,7 +46,7 @@ public class JsonStorageService
     }
 
     // Save products to JSON file
-    public void SaveProducts(List<Product> products)
+    public override void SaveProducts(List<Product> products)
     {
         try
         {
