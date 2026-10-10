@@ -47,6 +47,7 @@ dotnet run
 
 ## Project Structure
 
+```text
 SimpleInventoryManagementSystem
 │
 ├── Models
@@ -67,4 +68,4 @@ SimpleInventoryManagementSystem
 ├── Program.cs
 ├── README.md
 └── SimpleInventoryManagementSystem.csproj
-
+```
